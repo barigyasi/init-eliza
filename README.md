@@ -2,48 +2,56 @@
 
 <div align="center">
 
-![Init-Eliza Banner](assets/banner.svg)
+![Init-Eliza Banner](https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/assets/banner.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/Node.js-23.3.0-green.svg)](https://nodejs.org/)
+[![npm version](https://img.shields.io/npm/v/init-eliza.svg)](https://www.npmjs.com/package/init-eliza)
 
 
-*A powerful CLI tool for building, managing, and deploying AI agents with multiple provider integrations.*
+*A powerful CLI tool for building, managing, and deploying AI agents.*
 
 </div>
 
 ## 🌟 Features
-
-- 🎯 **Multiple API Support**
-  - OpenAI API
-  - <span style="color: lightblue">Anthropic API  (In Progress)</span>
-  - <span style="color: lightblue">Claude API  (In Progress)</span>
+- 🚀 **Quick Setup & Easy Management**
+   - 🎮 **Multi-Agent Management**
+   - 🐦 **Rapid Twitter Bot Deployment**
+   - 🛠️ **Advanced Customization Options**
+>
  
 
-- 🤖 **Diverse Agent Types**
-  - Local Agents
-  - Twitter Bots
-  - <span style="color: lightblue">Telegram Bots (In Progress)</span>
-  - <span style="color: lightblue">Discord Bots (In Progress)</span>
-  - <span style="color: lightblue">Agent Swarms (In Progress)</span>
-
-- 🛠️ **Easy Management**
-  - Create new agents
-  - Start existing agents
-  - Remove agents
-  - List all agents
+- 🛠️ **Easy Interface**
+  - 🆕 **Create new agents**
+  - ▶️ **Start existing agents**
+  - 🗑️ **Remove agents**
+  - 📋 **List all agents**
 
 ## 📋 Prerequisites
 
 - Node.js v23.3.0
 - pnpm package manager
 - Git
-- Linux/Unix environment
+- Linux/Unix environment (Tested on Ubuntu 22.04)
 
-## 🚀 Quick Start (Manual Installation)
+## 🚀 Quick Start via npm
+
+Install via npm:
+
+1. **Install Init-Eliza**
+   ```bash
+   npm i init-eliza
+   ```
+
+2. **Run Init-Eliza**
+   ```bash
+   npx init-eliza
+   ```
+
+## 👨🏾‍💻 Installation (Manual Installation) 
 
 1. **Clone the Repository**
    ```bash
-   git clone [REPO_LINK]
+   git clone https://github.com/W3bbieLabs/init-eliza.git
    cd init-eliza
    ```
 
@@ -62,32 +70,53 @@
 ### Creating a New Agent
 
 1. Select "Create Agent" from the main menu
-2. Choose your AI provider:
-   - GAIANET
-   - OpenAI
-3. Configure API keys (if required)
-4. Select agent type:
-   - Local Agent
-   - Twitter Agent
-5. Provide agent description
-6. For Twitter agents, enter credentials:
+2. Enter your agent's name when prompted
+3. Select agent type:
+   - Create Twitter Agent
+   - Create Local Agent
+4. For Twitter agents, enter credentials:
    - Username
    - Email
    - Password
-
-### Managing Agents
-
-- **Start Agent**: Launch an existing agent
-- **Remove Agent**: Delete an agent
-- **List Agents**: View all created agents
-
-
-
-## 🔧 Configuration
+5. Provide a description for your agent
+   - This will be used to generate the agent's personality, style and behavior
+6. The system will:
+   - Clone the Eliza repository
+   - Install dependencies
+   - Generate character configuration
+   - Set up environment variables
+   - Start your agent automatically
 
 
 
 ## 🤝 Contributing
+
+We are a small, open-source team and welcome contributions! We're particularly interested in help with:
+
+- Adding support for AI API integrations:
+  - OpenAI GPT models
+  - Anthropic Claude
+  - Other LLM providers
+- Expanding client platform support:
+  - Discord bot integration
+  - Telegram bot capabilities 
+  - Additional messaging platforms
+- Developing agent swarm capabilities:
+  - Multi-agent coordination
+  - Swarm behavior patterns
+  - Agent-to-agent communication
+- Improving code modularity:
+  - Refactoring into reusable components
+  - Better separation of concerns
+  - Creating well-defined interfaces
+  - Implementing design patterns
+
+
+If you'd like to help with any of these features or have other ideas, please feel free to contribute! We appreciate all forms of help, from code contributions to documentation improvements.
+
+### How to Contribute
+
+To contribute to this project, please follow these steps:
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -101,7 +130,7 @@ This project is licensed under the MIT License.
 
 ## 🙏 Acknowledgments
 
-- Built by [W3bbie](https://github.com/w3bbie)
+- Built by [W3bbie](https://w3bbie.xyz/)
 - Based on [Eliza](https://github.com/ai16z/eliza) v0.1.5-alpha.5
 
 ---
