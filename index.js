@@ -1267,7 +1267,7 @@ async function get_charcter_file_data(agent_description) {
 async function generate_character_file(agent_description, file_path) {
     let { system, bio, lore, messageExamples, postExamples, adjectives, topics, style } = await get_charcter_file_data(agent_description)
     let included_clients = agentType === 'Create Twitter Agent' ? "Clients.TWITTER" : ""
-    let character_file = `import { Character, ModelProviderName, defaultCharacter, Clients } from "@ai16z/eliza";
+    let character_file = `import { Character, ModelProviderName, defaultCharacter, Clients } from "@elizaos/core";
     export const character: Character = {
     ...defaultCharacter,
     modelProvider: ModelProviderName.GAIANET,

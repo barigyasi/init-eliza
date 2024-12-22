@@ -128,6 +128,29 @@ To contribute to this project, please follow these steps:
 
 This project is licensed under the MIT License.
 
+## Useful dev snippets
+
+[**Eliza Direct Client**](https://github.com/elizaOS/eliza/tree/4c658d7d70433fdcb2feeffe879429eaef10685d/packages/client-direct)
+
+**Get List of Agents**
+```bash
+ curl -X GET http://localhost:3000/agents
+```
+
+**Get Agent Info**
+```bash
+curl -X GET http://localhost:3000/agents/e0e10e6f-ff2b-0d4c-8011-1fc1eee7cb32
+```
+
+**Send message to agent**
+```bash
+curl -X POST http://localhost:3000/{insert_agent_name}/message -H "Content-Type: application/json" -d '{ "text": "Hello, how are you today?"}'
+```
+
+
+
+
+
 ## 🙏 Acknowledgments
 
 - Built by [W3bbie](https://w3bbie.xyz/)

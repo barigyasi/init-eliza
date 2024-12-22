@@ -61,6 +61,7 @@ Tweet:
 
 # Respond with qualifying action tags only.` + postActionResponseFooter;
 
+
 /**
  * Truncate text to fit within the Twitter character limit, ensuring it ends at a complete sentence.
  */
