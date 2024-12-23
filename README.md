@@ -128,7 +128,7 @@ To contribute to this project, please follow these steps:
 
 This project is licensed under the MIT License.
 
-## Useful dev snippets
+## Useful dev snippets and resources
 
 [**Eliza Direct Client**](https://github.com/elizaOS/eliza/tree/4c658d7d70433fdcb2feeffe879429eaef10685d/packages/client-direct)
 
@@ -147,7 +147,10 @@ curl -X GET http://localhost:3000/agents/e0e10e6f-ff2b-0d4c-8011-1fc1eee7cb32
 curl -X POST http://localhost:3000/{insert_agent_name}/message -H "Content-Type: application/json" -d '{ "text": "Hello, how are you today?"}'
 ```
 
+[**Models Supported**](https://elizaos.github.io/eliza/api/type-aliases/Models/#openai)
 
+
+[**OpenAI API**](https://platform.openai.com/docs/quickstart?desktop-os=macOS&language-preference=curl&quickstart-example=completions)
 
 
 

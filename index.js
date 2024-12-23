@@ -10,19 +10,21 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, readdirSync, writeFileSync } from 'fs';
 import path from 'path';
+import OpenAI from "openai";
+let openai = null
 
 let platform = process.platform;
 let folderName;
 let agentName;
 let selectedProvider;
-let apiKey;
+let apiKey = "";
 let agentType;
 let agentDescription;
 let twitterUsername = "";
 let twitterEmail = "";
 let twitterPassword = "";
 
-export const envTemplate = `
+let envTemplate = `
 # Discord Configuration
 DISCORD_APPLICATION_ID=
 DISCORD_API_TOKEN=              # Bot token
@@ -77,7 +79,7 @@ TWITTER_EMAIL=                  # Account email
 TWITTER_2FA_SECRET=
 
 TWITTER_COOKIES=                # Account cookies
-TWITTER_POLL_INTERVAL=120       # How often (in seconds) the bot should check for interactions
+TWITTER_POLL_INTERVAL=900       # How often (in seconds) the bot should check for interactions
 TWITTER_SEARCH_ENABLE=FALSE     # Enable timeline search, WARNING this greatly increases your chance of getting banned
 TWITTER_TARGET_USERS=           # Comma separated list of Twitter user names to interact with
 
@@ -91,7 +93,7 @@ POST_INTERVAL_MAX=              # Default: 180
 POST_IMMEDIATELY=
 
 # Twitter action processing configuration
-ACTION_INTERVAL=300000      # Interval in milliseconds between action processing runs (default: 5 minutes)
+ACTION_INTERVAL=1800000      # Interval in milliseconds between action processing runs (set: 15 minutes)
 ENABLE_ACTION_PROCESSING=false   # Set to true to enable the action processing loop
 
 # Feature Flags
@@ -370,14 +372,32 @@ async function retryWithNewName() {
 }
 
 async function cloneElizaRepo() {
-    folderName = `agents/${agentName}`;
-    //console.log("folderName", folderName);
+    folderName = `agents/`;
 
     // Add folder existence check
+    /*
     if (existsSync(folderName)) {
-        console.log(chalk.red(`\nFolder '${folderName}' already exists.`));
+        //console.log(chalk.red(`\nFolder '${folderName}' already exists.`));
         await retryWithNewName();
         return;
+    }*/
+
+    // Assume the eliza project has already been cloned, installed, and built
+    if (existsSync("agents")) {
+        await generate_character_file(agentDescription, `${folderName}/characters/${agentName}.character.json`)
+
+        let env_string = createTwitterEnvTemplate(twitterUsername, twitterPassword, twitterEmail)
+
+        console.log("API Key: " + apiKey)
+        if (apiKey !== '') {
+            env_string = createOpenEnvTemplate(apiKey)
+            console.log("!!!! ENV Strin")
+            console.log(env_string)
+        }
+
+        await writeEnvFile(env_string, `${folderName}/agent/.env`)
+
+        return
     }
 
     let spinner = createSpinner('Cloning Eliza repository...').start();
@@ -392,12 +412,19 @@ async function cloneElizaRepo() {
         // Use the correct version
         await execAsync('. ~/.nvm/nvm.sh && nvm use 23.3.0');
         await execAsync(`git clone -b v0.1.7-alpha.1 https://github.com/ai16z/eliza.git ${folderName}`);
-        await execAsync(`cd ${folderName} && git checkout develop`);
-        await execAsync(`curl -o ${folderName}/agent/src/index.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/index.ts`);
-        await execAsync(`curl -o ${folderName}/packages/client-twitter/src/post.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/post.ts`);
+        //await execAsync(`cd ${folderName} && git checkout develop`);
+        //await execAsync(`curl -o ${folderName}/packages/client-twitter/src/post.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/post.ts`);
 
         // Generate the .env file
         let env_string = createTwitterEnvTemplate(twitterUsername, twitterPassword, twitterEmail)
+
+        console.log("API Key: " + apiKey)
+        if (apiKey !== '') {
+            env_string = createOpenEnvTemplate(apiKey)
+            console.log("!!!! ENV Strin")
+            console.log(env_string)
+        }
+
         await writeEnvFile(env_string, `${folderName}/agent/.env`)
 
         // Check and install pnpm if needed
@@ -406,7 +433,7 @@ async function cloneElizaRepo() {
         // Generate the character 
         spinner.success({ text: `Successfully installed Eliza into ${folderName}` });
 
-        await generate_character_file(agentDescription, `${folderName}/agent/src/character.ts`)
+        await generate_character_file(agentDescription, `${folderName}/characters/${agentName}.character.json`)
 
         spinner = createSpinner('Setting up Eliza...').start();
 
@@ -423,7 +450,8 @@ async function cloneElizaRepo() {
         spinner.success({ text: `Successfully configured Eliza.` });
 
         console.error(chalk.green('Starting agent...'));
-        await startAgent(folderName);
+        console.error(chalk.green('TODO start agent'));
+        //await startAgent(folderName);
 
     } catch (error) {
         spinner.error({ text: 'Failed to clone repository' });
@@ -449,11 +477,11 @@ async function showMainMenu() {
     switch (answers.action) {
         case 'Create Agent':
             await askName();
-            /*
+
             await selectProvider();
-            if (selectedProvider !== 'Create with Ollama (Local)') {
+            if (selectedProvider !== 'cancel') {
                 await configureAPI();
-            }*/
+            }
             await selectAgentType();
             await getTwitterCredentials();
             await getAgentDescription();
@@ -642,21 +670,16 @@ async function selectProvider() {
     const answers = await inquirer.prompt({
         name: 'provider',
         type: 'list',
-        message: 'Select an API Key provider:',
+        message: 'Select a Model:',
         choices: [
-            'Create with Ollama (Local)',
-            'Create with OPENAI API KEY',
-            'Create with Anthropic API KEY',
-            'Create with Google API KEY',
-            'Create with Azure API KEY'
+            'openai',
+            'anthropic',
+            'claude_vertex',
+            'cancel'
         ]
     });
 
     selectedProvider = answers.provider;
-
-    if (selectedProvider === 'Create with Ollama (Local)') {
-        //await installOllama();
-    }
 }
 
 async function configureAPI() {
@@ -667,14 +690,21 @@ async function configureAPI() {
         choices: ['Enter API Key', 'Skip']
     });
 
+
     if (shouldSetAPI.setAPI === 'Enter API Key') {
         const apiKeyInput = await inquirer.prompt({
             name: 'key',
-            type: 'password',
+            type: 'input',
             message: 'Enter your API key:',
-            mask: '*'
         });
         apiKey = apiKeyInput.key;
+
+        if (selectedProvider === 'openai') {
+            openai = new OpenAI({ apiKey });
+        }
+
+    } else {
+        selectedProvider = 'cancel';
     }
 }
 
@@ -903,31 +933,6 @@ async function startAgent(agent_path) {
     });
 }
 
-
-async function test() {
-    // Use spawn instead of exec to get real-time output
-    const child = spawn('pnpm', ['start'], {
-        cwd: `agents/boosie/`,
-        shell: true,
-        stdio: 'inherit' // This will pipe the process output directly to the parent process
-    });
-
-    // Handle process exit
-    return new Promise((resolve, reject) => {
-        child.on('exit', (code) => {
-            if (code === 0) {
-                resolve();
-            } else {
-                reject(new Error(`Process exited with code ${code}`));
-            }
-        });
-
-        child.on('error', (err) => {
-            reject(err);
-        });
-    });
-}
-
 async function isPnpmInstalled() {
     try {
         await execAsync('which pnpm');
@@ -1008,7 +1013,7 @@ async function startExistingAgent() {
 }
 
 
-async function makeGaiaNetRequest(messages, model = "model_name") {
+async function makeGaiaNetRequest(messages, model = "llama") {
     const maxRetries = 3;
     const retryDelay = 1000; // 1 second
 
@@ -1052,27 +1057,46 @@ async function makeGaiaNetRequest(messages, model = "model_name") {
     }
 }
 
+async function makeOpenAIRequest(messages, model = "gpt-4o-mini") {
+    const completion = await openai.chat.completions.create({ model, messages });
+    return completion.choices[0].message.content
+    //console.log(completion.choices[0].message);
+}
+
+// Change to support other models
 async function generatePrompt(instructions, description, system_prompt) {
     try {
         let content = `${instructions} for an AI agent based on the following description.\n\nDescription: '${description}'\n\nDo the best you can even if its hard. Simply respond with the best output you can. Simply return the string of the prompt.\n`
-        let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
-            role: "user", content
-        }])
-        return resp.choices[0].message.content
+
+        if (selectedProvider === 'openai') {
+            let resp = await makeOpenAIRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
+            return resp
+        } else {
+            let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
+            return resp.choices[0].message.content
+        }
+
     } catch (error) {
         console.error('Error: GaiaNet request failed.');
         process.exit(0)
     }
 }
 
-
+// Change to support other models
 async function generate_with_format_example(instructions, description, system_prompt, format_example) {
     let content = `${instructions} for an AI agent based on the following description.\n\nDescription: '${description}' \n\nUse the following format as an example: ${format_example}\n\nDo the best you can even if its hard. Simply respond with the best output you can. Simply return the string of the prompt.\n`
     //console.log(content)
-    let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
-        role: "user", content
-    }])
-    return resp.choices[0].message.content
+    if (selectedProvider === 'openai') {
+        let resp = await makeOpenAIRequest([{ role: "system", content: system_prompt }, {
+            role: "user", content
+        }])
+        return resp
+    } else {
+        let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
+            role: "user", content
+        }])
+        return resp.choices[0].message.content
+    }
 }
 
 async function generate_system_prompt(agent_description) {
@@ -1107,49 +1131,49 @@ async function generate_message_examples(agent_description, agent_name) {
     let example = `[
         [
             {
-                user: "{{user1}}",
-                content: {
-                    text: "what's your take on zion this season?"
+                "user": "{{user1}}",
+                "content": {
+                    "text": "what's your take on zion this season?"
                 }
             },
             {
-                user: "${agent_name}",
-                content: {
-                    text: "zion's gonna average 28 and 10 this year, no debate. health isn't an issue anymore. book it."
+                "user": "${agent_name}",
+                "content": {
+                    "text": "zion's gonna average 28 and 10 this year, no debate. health isn't an issue anymore. book it."
                 }
             }
         ],
         [
             {
-                user: "{{user1}}",
-                content: {
-                    text: "who's the real mvp right now?"
+                "user": "{{user1}}",
+                "content": {
+                    "text": "who's the real mvp right now?"
                 }
             },
             {
-                user: "${agent_name}",
-                content: {
-                    text: "it's jokic and it's not even close. anyone saying otherwise is just salty."
+                "user": "${agent_name}",
+                "content": {
+                    "text": "it's jokic and it's not even close. anyone saying otherwise is just salty."
                 }
             }
         ],
         [
             {
-                user: "{{user1}}",
-                content: {
-                    text: "what's your take on the lakers this year?"
+                "user": "{{user1}}",
+                "content": {
+                    "text": "what's your take on the lakers this year?"
                 }
             },
             {
-                user: "${agent_name}",
-                content: {
-                    text: "if the lakers don't make the western conference finals, it's a failure. no excuses."
+                "user": "${agent_name}",
+                "content": {
+                    "text": "if the lakers don't make the western conference finals, it's a failure. no excuses."
                 }
             }
         ]
     ]`
     console.log(chalk.green('\nGenerating message examples...'));
-    let output = await generate_with_format_example("Generate an array of a short conversations with the same format as the description", agent_description, "You are an elite programmer.", example)
+    let output = await generate_with_format_example("Generate an array of a short conversations with the same format as the description. Be sure to only return the array of conversations. Do not include any other text.", agent_description, "You are an elite programmer.", example)
     return output
 }
 
@@ -1171,7 +1195,7 @@ async function generate_adjectives(agent_description) {
         "chaotic",
         "unapologetic",
         "confident",
-        "spicy",
+        "spicy"
     ]`
     console.log(chalk.green('\nGenerating adjectives...'));
     let output = await generate_with_format_example("Generate an array of 5 adjectives", agent_description, "You are an elite programmer.", example)
@@ -1184,7 +1208,7 @@ async function generate_topics(agent_description) {
         "sports",
         "music",
         "movies",
-        "tv",
+        "tv"
     ]`
     console.log(chalk.green('\nGenerating topics...'));
     let output = await generate_with_format_example("Generate an array of 5 topics", agent_description, "You are an elite programmer.", example)
@@ -1193,7 +1217,7 @@ async function generate_topics(agent_description) {
 
 async function generate_style(agent_description) {
     let example = `{
-            all: [
+            "all": [
         "use lowercase only",
             "never use hashtags or emojis",
             "make takes bold and debate-worthy",
@@ -1206,7 +1230,7 @@ async function generate_style(agent_description) {
             "embrace chaos and keep it fun",
             "act like a sports pundit who thrives on controversy"
     ],
-    chat: [
+    "chat": [
         "answer with bold opinions, not safe guesses",
         "don't dodge questions—commit to the spiciest take",
         "be unfiltered but not mean",
@@ -1220,9 +1244,9 @@ async function generate_style(agent_description) {
             "always sound confident, even if it's outlandish",
             "aim to entertain, not just inform"
         ]
-}`
+    }`
     console.log(chalk.green('\nGenerating style...'));
-    let output = await generate_with_format_example("Generate an javascript object with 3 keys. all, chat, and post. each key should have an array of strings as values.", agent_description, "You are an elite programmer.", example)
+    let output = await generate_with_format_example("Generate an javascript object with 3 keys. all, chat, and post. each key should have an array of strings as values. Be sure to only return the object. Do not include any other text.", agent_description, "You are an elite programmer.", example)
     return output
 }
 
@@ -1266,28 +1290,34 @@ async function get_charcter_file_data(agent_description) {
 
 async function generate_character_file(agent_description, file_path) {
     let { system, bio, lore, messageExamples, postExamples, adjectives, topics, style } = await get_charcter_file_data(agent_description)
-    let included_clients = agentType === 'Create Twitter Agent' ? "Clients.TWITTER" : ""
-    let character_file = `import { Character, ModelProviderName, defaultCharacter, Clients } from "@elizaos/core";
-    export const character: Character = {
-    ...defaultCharacter,
-    modelProvider: ModelProviderName.GAIANET,
-    clients: [${included_clients}],
-    name: "${agentName}",
-    plugins: [],
-    settings: {
-        secrets: {},
-        voice: {
-            model: "en_US-male-medium"
+    let included_clients = agentType === 'Create Twitter Agent' ? `"twitter"` : ""
+    let model_provider = ""
+
+    if (selectedProvider === 'cancel') {
+        model_provider = 'gaianet'
+    } else {
+        model_provider = selectedProvider
+    }
+
+    let character_file = `{
+    "name": "${agentName}",
+    "clients": [${included_clients}],
+    "modelProvider": "${model_provider}",
+    "settings": {
+        "voice": {
+            "model": "en_GB-alan-medium"
         }
     },
-    system: ${system},
-    bio: ${bio},
-    lore: ${lore},
-    messageExamples: ${messageExamples},
-    postExamples: ${postExamples},
-    adjectives: ${adjectives},
-    topics: ${topics},
-    style: ${style}
+    "plugins": [],
+    "system": ${system},
+    "bio": ${bio},
+    "lore": ${lore},
+    "knowledge": [],
+    "messageExamples": ${messageExamples},
+    "postExamples": ${postExamples},
+    "topics": ${topics},
+    "style": ${style},
+    "adjectives": ${adjectives}
     }`
 
     try {
@@ -1300,10 +1330,31 @@ async function generate_character_file(agent_description, file_path) {
 }
 
 function createTwitterEnvTemplate(username, password, email) {
-    return envTemplate.replace(
+    let result = envTemplate.replace(
         /TWITTER_USERNAME=.*\nTWITTER_PASSWORD=.*\nTWITTER_EMAIL=.*/,
-        `TWITTER_USERNAME=${username}\nTWITTER_PASSWORD=${password}\nTWITTER_EMAIL=${email} `
+        `TWITTER_USERNAME=${username}\nTWITTER_PASSWORD=${password}\nTWITTER_EMAIL=${email}`
     );
+    envTemplate = result
+    return result
+}
+
+function createOpenEnvTemplate(api_key) {
+    if (selectedProvider === 'openai') {
+        return envTemplate.replace(
+            /OPENAI_API_KEY=.*\n/,
+            `OPENAI_API_KEY=${api_key}\n`
+        );
+    } else if (selectedProvider === 'anthropic') {
+        return envTemplate.replace(
+            /ANTHROPIC_API_KEY=.*\n/,
+            `ANTHROPIC_API_KEY=${api_key}\n`
+        );
+    } else if (selectedProvider === 'claude_vertex') {
+        return envTemplate.replace(
+            /CLAUDE_API_KEY=.*\n/,
+            `CLAUDE_API_KEY=${api_key}\n`
+        );
+    }
 }
 
 function writeEnvFile(content, filepath = 'test.env') {
@@ -1315,3 +1366,39 @@ function writeEnvFile(content, filepath = 'test.env') {
 }
 
 startApp();
+
+/*
+async function test() {
+    // Use spawn instead of exec to get real-time output
+    const child = spawn('pnpm', ['start'], {
+        cwd: `agents/boosie/`,
+        shell: true,
+        stdio: 'inherit' // This will pipe the process output directly to the parent process
+    });
+
+    // Handle process exit
+    return new Promise((resolve, reject) => {
+        child.on('exit', (code) => {
+            if (code === 0) {
+                resolve();
+            } else {
+                reject(new Error(`Process exited with code ${code}`));
+            }
+        });
+
+        child.on('error', (err) => {
+            reject(err);
+        });
+    });
+}
+*/
+
+/*
+async function test() {
+    openai = new OpenAI({ apiKey:})
+    let resp = await makeOpenAIRequest([{ role: "system", content: "You are an elite programmer." }, { role: "user", content: "What is the capital of France?" }])
+    console.log(resp)
+}
+
+test()
+*/
