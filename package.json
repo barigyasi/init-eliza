@@ -1,6 +1,6 @@
 {
     "name": "init-eliza",
-    "version": "0.1.3",
+    "version": "0.2.0",
     "description": "Create Eliza apps with ease",
     "keywords": [
         "ai",
@@ -22,6 +22,16 @@
     "scripts": {
         "start": "node index.js"
     },
+    "author": "w3bbie",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/W3bbieLabs/init-eliza.git"
+    },
+    "bugs": {
+        "url": "https://github.com/W3bbieLabs/init-eliza/issues"
+    },
+    "homepage": "https://github.com/W3bbieLabs/init-eliza#readme",
     "dependencies": {
         "@anthropic-ai/sdk": "^0.33.1",
         "better-sqlite3": "11.6.0",
