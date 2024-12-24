@@ -10,19 +10,24 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, readdirSync, writeFileSync } from 'fs';
 import path from 'path';
+import OpenAI from "openai";
+import Anthropic from '@anthropic-ai/sdk';
+
+let openai = null
+let anthropicClient = null
 
 let platform = process.platform;
 let folderName;
 let agentName;
 let selectedProvider;
-let apiKey;
+let apiKey = "";
 let agentType;
 let agentDescription;
 let twitterUsername = "";
 let twitterEmail = "";
 let twitterPassword = "";
 
-export const envTemplate = `
+let envTemplate = `
 # Discord Configuration
 DISCORD_APPLICATION_ID=
 DISCORD_API_TOKEN=              # Bot token
@@ -77,7 +82,7 @@ TWITTER_EMAIL=                  # Account email
 TWITTER_2FA_SECRET=
 
 TWITTER_COOKIES=                # Account cookies
-TWITTER_POLL_INTERVAL=120       # How often (in seconds) the bot should check for interactions
+TWITTER_POLL_INTERVAL=900       # How often (in seconds) the bot should check for interactions
 TWITTER_SEARCH_ENABLE=FALSE     # Enable timeline search, WARNING this greatly increases your chance of getting banned
 TWITTER_TARGET_USERS=           # Comma separated list of Twitter user names to interact with
 
@@ -91,7 +96,7 @@ POST_INTERVAL_MAX=              # Default: 180
 POST_IMMEDIATELY=
 
 # Twitter action processing configuration
-ACTION_INTERVAL=300000      # Interval in milliseconds between action processing runs (default: 5 minutes)
+ACTION_INTERVAL=1800000      # Interval in milliseconds between action processing runs (set: 15 minutes)
 ENABLE_ACTION_PROCESSING=false   # Set to true to enable the action processing loop
 
 # Feature Flags
@@ -370,14 +375,31 @@ async function retryWithNewName() {
 }
 
 async function cloneElizaRepo() {
-    folderName = `agents/${agentName}`;
-    //console.log("folderName", folderName);
+    folderName = `agents/`;
 
     // Add folder existence check
+    /*
     if (existsSync(folderName)) {
-        console.log(chalk.red(`\nFolder '${folderName}' already exists.`));
+        //console.log(chalk.red(`\nFolder '${folderName}' already exists.`));
         await retryWithNewName();
         return;
+    }*/
+
+    // Assume the eliza project has already been cloned, installed, and built
+    if (existsSync("agents")) {
+        await generate_character_file(agentDescription, `${folderName}/characters/${agentName}.character.json`)
+
+        let env_string = createTwitterEnvTemplate(twitterUsername, twitterPassword, twitterEmail)
+
+        if (apiKey !== '') {
+            env_string = createOpenEnvTemplate(apiKey)
+        }
+
+        await writeEnvFile(env_string, `${folderName}/agent/.env`)
+
+        await startAgent(agentName);
+
+        return
     }
 
     let spinner = createSpinner('Cloning Eliza repository...').start();
@@ -392,12 +414,16 @@ async function cloneElizaRepo() {
         // Use the correct version
         await execAsync('. ~/.nvm/nvm.sh && nvm use 23.3.0');
         await execAsync(`git clone -b v0.1.7-alpha.1 https://github.com/ai16z/eliza.git ${folderName}`);
-        await execAsync(`cd ${folderName} && git checkout develop`);
-        await execAsync(`curl -o ${folderName}/agent/src/index.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/index.ts`);
-        await execAsync(`curl -o ${folderName}/packages/client-twitter/src/post.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/post.ts`);
+        //await execAsync(`cd ${folderName} && git checkout develop`);
+        //await execAsync(`curl -o ${folderName}/packages/client-twitter/src/post.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/post.ts`);
 
         // Generate the .env file
         let env_string = createTwitterEnvTemplate(twitterUsername, twitterPassword, twitterEmail)
+
+        if (apiKey !== '') {
+            env_string = createOpenEnvTemplate(apiKey)
+        }
+
         await writeEnvFile(env_string, `${folderName}/agent/.env`)
 
         // Check and install pnpm if needed
@@ -406,7 +432,7 @@ async function cloneElizaRepo() {
         // Generate the character 
         spinner.success({ text: `Successfully installed Eliza into ${folderName}` });
 
-        await generate_character_file(agentDescription, `${folderName}/agent/src/character.ts`)
+        await generate_character_file(agentDescription, `${folderName}/characters/${agentName}.character.json`)
 
         spinner = createSpinner('Setting up Eliza...').start();
 
@@ -422,8 +448,8 @@ async function cloneElizaRepo() {
 
         spinner.success({ text: `Successfully configured Eliza.` });
 
-        console.error(chalk.green('Starting agent...'));
-        await startAgent(folderName);
+        console.log(chalk.green('Starting agent...'));
+        await startAgent(agentName);
 
     } catch (error) {
         spinner.error({ text: 'Failed to clone repository' });
@@ -442,6 +468,7 @@ async function showMainMenu() {
             'Start Agent',
             'Remove Agent',
             'List Agents',
+            'Reinstall SQLite',
             'Exit'
         ]
     });
@@ -449,11 +476,11 @@ async function showMainMenu() {
     switch (answers.action) {
         case 'Create Agent':
             await askName();
-            /*
+
             await selectProvider();
-            if (selectedProvider !== 'Create with Ollama (Local)') {
+            if (selectedProvider !== 'cancel') {
                 await configureAPI();
-            }*/
+            }
             await selectAgentType();
             await getTwitterCredentials();
             await getAgentDescription();
@@ -467,6 +494,10 @@ async function showMainMenu() {
             break;
         case 'List Agents':
             await listAgents();
+            break;
+        case 'Reinstall SQLite':
+            await fixStupidSQLiteIssue();
+            await showMainMenu();
             break;
         case 'Exit':
             console.log(chalk.green('Thanks for using Init-Eliza!'));
@@ -487,9 +518,11 @@ async function removeAgent() {
 
     try {
         // Get list of agent folders
-        const agents = readdirSync(agentsDir, { withFileTypes: true })
-            .filter(dirent => dirent.isDirectory())
-            .map(dirent => dirent.name);
+        let agents = readdirSync(path.join(agentsDir, 'characters'), { withFileTypes: true })
+            .filter(dirent => dirent.isFile())
+            .map(dirent => dirent.name)
+            .filter(name => name.endsWith('.character.json'))
+            .map(name => name.split('.')[0]);
 
         if (agents.length === 0) {
             console.log(chalk.yellow('\nNo agents found to remove.'));
@@ -521,7 +554,7 @@ async function removeAgent() {
         if (confirmation.confirm) {
             const spinner = createSpinner('Removing agent...').start();
             try {
-                await execAsync(`rm -r agents/${answer.selectedAgent}`);
+                await execAsync(`rm agents/characters/${answer.selectedAgent}.character.json`);
                 spinner.success({ text: `Successfully removed agent: ${answer.selectedAgent}` });
                 await showMainMenu();
             } catch (error) {
@@ -549,9 +582,11 @@ async function listAgents() {
 
     try {
         // Get list of agent folders
-        const agents = readdirSync(agentsDir, { withFileTypes: true })
-            .filter(dirent => dirent.isDirectory())
-            .map(dirent => dirent.name);
+        let agents = readdirSync(path.join(agentsDir, 'characters'), { withFileTypes: true })
+            .filter(dirent => dirent.isFile())
+            .map(dirent => dirent.name)
+            .filter(name => name.endsWith('.character.json'))
+            .map(name => name.split('.')[0]);
 
         if (agents.length === 0) {
             console.log(chalk.yellow('\nNo agents found.'));
@@ -642,21 +677,16 @@ async function selectProvider() {
     const answers = await inquirer.prompt({
         name: 'provider',
         type: 'list',
-        message: 'Select an API Key provider:',
+        message: 'Select a Model:',
         choices: [
-            'Create with Ollama (Local)',
-            'Create with OPENAI API KEY',
-            'Create with Anthropic API KEY',
-            'Create with Google API KEY',
-            'Create with Azure API KEY'
+            'openai',
+            'anthropic',
+            'claude_vertex',
+            'cancel'
         ]
     });
 
     selectedProvider = answers.provider;
-
-    if (selectedProvider === 'Create with Ollama (Local)') {
-        //await installOllama();
-    }
 }
 
 async function configureAPI() {
@@ -667,14 +697,23 @@ async function configureAPI() {
         choices: ['Enter API Key', 'Skip']
     });
 
+
     if (shouldSetAPI.setAPI === 'Enter API Key') {
         const apiKeyInput = await inquirer.prompt({
             name: 'key',
-            type: 'password',
+            type: 'input',
             message: 'Enter your API key:',
-            mask: '*'
         });
         apiKey = apiKeyInput.key;
+
+        if (selectedProvider === 'openai') {
+            openai = new OpenAI({ apiKey });
+        } else if (selectedProvider === 'anthropic') {
+            anthropicClient = new Anthropic({ apiKey });
+        }
+
+    } else {
+        selectedProvider = 'cancel';
     }
 }
 
@@ -839,9 +878,9 @@ async function startApp() {
     // Prepare NVM environment
 
     await showMainMenu()
-    await sleep();
+    //await sleep();
     //await prepareNvmEnvironment();
-    showSummary();
+    //showSummary();
 }
 
 async function checkNodeVersion() {
@@ -864,14 +903,14 @@ async function checkNodeVersion() {
     }
 }
 
-async function fixStupidSQLiteIssue(agent_path) {
+async function fixStupidSQLiteIssue() {
     // This is to fix the better-sqlite3 issue. Temporary fix. Not ideal.
     let spinner = createSpinner('Waking up agent...').start();
-    await execAsync(`rm -rf ${agent_path}/node_modules/better-sqlite3`);
+    await execAsync(`rm -rf agents/node_modules/better-sqlite3`);
     spinner.update({ text: 'Removed better-sqlite3' });
-    await execAsync(`cd ${agent_path} && pnpm store prune`);
+    await execAsync(`pnpm store prune`);
     spinner.update({ text: 'Pruned store' });
-    await execAsync(`cd ${agent_path} && pnpm add better-sqlite3 --force -w`);
+    await execAsync(`pnpm add better-sqlite3 --force -w`);
     spinner.update({ text: 'Added better-sqlite3' });
     spinner.success({ text: 'Agent is awake!' });
 }
@@ -879,35 +918,12 @@ async function fixStupidSQLiteIssue(agent_path) {
 async function startAgent(agent_path) {
 
     // Not sure if this is needed. Avoids the stupid better-sqlite3 issue.
-    await fixStupidSQLiteIssue(agent_path);
+    //await fixStupidSQLiteIssue();
 
-    const child = spawn('pnpm', ['start'], {
-        cwd: agent_path,
-        shell: true,
-        stdio: 'inherit' // This will pipe the process output directly to the parent process
-    });
-
-    // Handle process exit
-    return new Promise((resolve, reject) => {
-        child.on('exit', (code) => {
-            if (code === 0) {
-                resolve();
-            } else {
-                reject(new Error(`Process exited with code ${code}`));
-            }
-        });
-
-        child.on('error', (err) => {
-            reject(err);
-        });
-    });
-}
-
-
-async function test() {
-    // Use spawn instead of exec to get real-time output
-    const child = spawn('pnpm', ['start'], {
-        cwd: `agents/boosie/`,
+    let p = `--character="characters/${agent_path}.character.json"`
+    console.log(`p:${p}`)
+    const child = spawn('pnpm', ['start', `--character="characters/${agent_path}.character.json"`], {
+        cwd: `agents/`,
         shell: true,
         stdio: 'inherit' // This will pipe the process output directly to the parent process
     });
@@ -973,10 +989,13 @@ async function startExistingAgent() {
 
     try {
         // Get list of agent folders
-        agents = readdirSync(agentsDir, { withFileTypes: true })
-            .filter(dirent => dirent.isDirectory())
-            .map(dirent => dirent.name);
+        agents = readdirSync(path.join(agentsDir, 'characters'), { withFileTypes: true })
+            .filter(dirent => dirent.isFile())
+            .map(dirent => dirent.name)
+            .filter(name => name.endsWith('.character.json'))
+            .map(name => name.split('.')[0]);
 
+        agents.push("<Main Menu")
         if (agents.length === 0) {
             console.log(chalk.yellow('\nNo agents found. Create an agent first.'));
             return;
@@ -990,17 +1009,22 @@ async function startExistingAgent() {
             choices: agents
         });
 
-        const selectedAgentPath = path.join(agentsDir, answer.selectedAgent);
-        //const spinner = createSpinner(`Starting Agent: ${answer.selectedAgent}`).start();
+        if (answer.selectedAgent === "<Main Menu") {
+            await showMainMenu();
+            return;
+        }
+
+        //const selectedAgentPath = path.join(agentsDir, answer.selectedAgent);
+        console.log(chalk.yellow(`Starting Agent: ${answer.selectedAgent}`));
 
         try {
-            await startAgent(selectedAgentPath);
+            await startAgent(answer.selectedAgent);
         } catch (error) {
-            spinner.error({ text: 'Failed to start agent' });
             console.error(chalk.red('Error details:', error.message));
         }
 
-        await startAgent(selectedAgentPath);
+        //await startAgent(selectedAgentPath);
+
 
     } catch (error) {
         console.error(chalk.red('Error reading agents directory:', error.message));
@@ -1008,7 +1032,7 @@ async function startExistingAgent() {
 }
 
 
-async function makeGaiaNetRequest(messages, model = "model_name") {
+async function makeGaiaNetRequest(messages, model = "llama") {
     const maxRetries = 3;
     const retryDelay = 1000; // 1 second
 
@@ -1052,32 +1076,67 @@ async function makeGaiaNetRequest(messages, model = "model_name") {
     }
 }
 
+async function makeOpenAIRequest(messages, model = "gpt-4o-mini") {
+    const completion = await openai.chat.completions.create({ model, messages });
+    let output = completion.choices[0].message.content
+    console.log(chalk.blueBright(`\n${output}`));
+    return output
+}
+
+async function makeClaudeRequest(system, messages, model = "claude-3-5-sonnet-latest") {
+    const message = await anthropicClient.messages.create({ max_tokens: 1024, messages, model, system });
+    let output = message.content[0].text
+    console.log(chalk.blueBright(`\n${output}`));
+    return output
+}
+
+
+// Change to support other models
 async function generatePrompt(instructions, description, system_prompt) {
     try {
         let content = `${instructions} for an AI agent based on the following description.\n\nDescription: '${description}'\n\nDo the best you can even if its hard. Simply respond with the best output you can. Simply return the string of the prompt.\n`
-        let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
-            role: "user", content
-        }])
-        return resp.choices[0].message.content
+
+        if (selectedProvider === 'openai') {
+            let resp = await makeOpenAIRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
+            return resp
+        } else if (selectedProvider === 'anthropic') {
+            let resp = await makeClaudeRequest(system_prompt, [{ role: "user", content }])
+            return resp
+        } else {
+            let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
+            return resp.choices[0].message.content
+        }
+
     } catch (error) {
-        console.error('Error: GaiaNet request failed.');
+        console.error(`Provider: ${selectedProvider} failed: ${error}`);
         process.exit(0)
     }
 }
 
-
+// Change to support other models
 async function generate_with_format_example(instructions, description, system_prompt, format_example) {
     let content = `${instructions} for an AI agent based on the following description.\n\nDescription: '${description}' \n\nUse the following format as an example: ${format_example}\n\nDo the best you can even if its hard. Simply respond with the best output you can. Simply return the string of the prompt.\n`
     //console.log(content)
-    let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
-        role: "user", content
-    }])
-    return resp.choices[0].message.content
+    if (selectedProvider === 'openai') {
+        let resp = await makeOpenAIRequest([{ role: "system", content: system_prompt }, {
+            role: "user", content
+        }])
+        return resp
+    } else if (selectedProvider === 'anthropic') {
+        let resp = await makeClaudeRequest(system_prompt, [{ role: "user", content }])
+        return resp
+    } else {
+        let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
+            role: "user", content
+        }])
+        return resp.choices[0].message.content
+    }
 }
 
 async function generate_system_prompt(agent_description) {
     console.log(chalk.green('\nGenerating system prompt...'));
-    let output = await generatePrompt("Generate a short system prompt", agent_description, "You are an elite programmer.")
+    let output = await generatePrompt("Generate a short system prompt. Do not include quotation marks.", agent_description, "You are an elite programmer.")
+    output = output.replace(/^"|"$/g, '')
     return output
 }
 
@@ -1085,7 +1144,7 @@ async function generate_bio(agent_description) {
     let example = `[
         "hot takes specialist with no filter. lives for chaos, debates, and stirring the pot. if you're not mad, he's not doing his job.",
         "professional pot-stirrer who loves bold claims and wild predictions. thinks he's right 100% of the time, even when he's not.",
-        "will defend his takes to the grave. loves nba drama almost as much as the games. unapologetically confident, always entertaining.",
+        "will defend his takes to the grave. loves nba drama almost as much as the games. unapologetically confident, always entertaining."
     ]`
     console.log(chalk.green('\nGenerating bio...'));
     let output = await generate_with_format_example("Generate an array of 5 bios", agent_description, "You are an elite programmer.", example)
@@ -1107,49 +1166,49 @@ async function generate_message_examples(agent_description, agent_name) {
     let example = `[
         [
             {
-                user: "{{user1}}",
-                content: {
-                    text: "what's your take on zion this season?"
+                "user": "{{user1}}",
+                "content": {
+                    "text": "what's your take on zion this season?"
                 }
             },
             {
-                user: "${agent_name}",
-                content: {
-                    text: "zion's gonna average 28 and 10 this year, no debate. health isn't an issue anymore. book it."
+                "user": "${agent_name}",
+                "content": {
+                    "text": "zion's gonna average 28 and 10 this year, no debate. health isn't an issue anymore. book it."
                 }
             }
         ],
         [
             {
-                user: "{{user1}}",
-                content: {
-                    text: "who's the real mvp right now?"
+                "user": "{{user1}}",
+                "content": {
+                    "text": "who's the real mvp right now?"
                 }
             },
             {
-                user: "${agent_name}",
-                content: {
-                    text: "it's jokic and it's not even close. anyone saying otherwise is just salty."
+                "user": "${agent_name}",
+                "content": {
+                    "text": "it's jokic and it's not even close. anyone saying otherwise is just salty."
                 }
             }
         ],
         [
             {
-                user: "{{user1}}",
-                content: {
-                    text: "what's your take on the lakers this year?"
+                "user": "{{user1}}",
+                "content": {
+                    "text": "what's your take on the lakers this year?"
                 }
             },
             {
-                user: "${agent_name}",
-                content: {
-                    text: "if the lakers don't make the western conference finals, it's a failure. no excuses."
+                "user": "${agent_name}",
+                "content": {
+                    "text": "if the lakers don't make the western conference finals, it's a failure. no excuses."
                 }
             }
         ]
     ]`
     console.log(chalk.green('\nGenerating message examples...'));
-    let output = await generate_with_format_example("Generate an array of a short conversations with the same format as the description", agent_description, "You are an elite programmer.", example)
+    let output = await generate_with_format_example("Generate an array of a short conversations with the same format as the description. Be sure to only return the array of conversations. Do not include any other text.", agent_description, "You are an elite programmer.", example)
     return output
 }
 
@@ -1158,7 +1217,7 @@ async function generate_post_examples(agent_description) {
         "zion's winning mvp in the next two years. if you don't see it, you're blind.",
         "jokic is already a top 10 player of all time. the rings are coming, just wait.",
         "if curry gets one more ring, he's officially top 5 all time. no debate.",
-        "kyrie irving is the most skilled point guard in nba history. respect the handles.",
+        "kyrie irving is the most skilled point guard in nba history. respect the handles."
     ]`
     console.log(chalk.green('\nGenerating post examples...'));
     let output = await generate_with_format_example("Generate an array of 5 twitterpost examples", agent_description, "You are an elite programmer.", example)
@@ -1171,7 +1230,7 @@ async function generate_adjectives(agent_description) {
         "chaotic",
         "unapologetic",
         "confident",
-        "spicy",
+        "spicy"
     ]`
     console.log(chalk.green('\nGenerating adjectives...'));
     let output = await generate_with_format_example("Generate an array of 5 adjectives", agent_description, "You are an elite programmer.", example)
@@ -1184,7 +1243,7 @@ async function generate_topics(agent_description) {
         "sports",
         "music",
         "movies",
-        "tv",
+        "tv"
     ]`
     console.log(chalk.green('\nGenerating topics...'));
     let output = await generate_with_format_example("Generate an array of 5 topics", agent_description, "You are an elite programmer.", example)
@@ -1193,7 +1252,7 @@ async function generate_topics(agent_description) {
 
 async function generate_style(agent_description) {
     let example = `{
-            all: [
+            "all": [
         "use lowercase only",
             "never use hashtags or emojis",
             "make takes bold and debate-worthy",
@@ -1206,7 +1265,7 @@ async function generate_style(agent_description) {
             "embrace chaos and keep it fun",
             "act like a sports pundit who thrives on controversy"
     ],
-    chat: [
+    "chat": [
         "answer with bold opinions, not safe guesses",
         "don't dodge questions—commit to the spiciest take",
         "be unfiltered but not mean",
@@ -1220,9 +1279,9 @@ async function generate_style(agent_description) {
             "always sound confident, even if it's outlandish",
             "aim to entertain, not just inform"
         ]
-}`
+    }`
     console.log(chalk.green('\nGenerating style...'));
-    let output = await generate_with_format_example("Generate an javascript object with 3 keys. all, chat, and post. each key should have an array of strings as values.", agent_description, "You are an elite programmer.", example)
+    let output = await generate_with_format_example("Generate an javascript object with 3 keys. all, chat, and post. each key should have an array of strings as values. Be sure to only return the object. Do not include any other text.", agent_description, "You are an elite programmer.", example)
     return output
 }
 
@@ -1244,6 +1303,7 @@ async function get_charcter_file_data(agent_description) {
     await sleep(10)
     let generated_style = await generate_style(agent_description)
 
+    /*
     console.log(chalk.blueBright(`\nSystem Prompt: ${generated_system_data} `));
     console.log(chalk.blueBright(`\n\nBio: ${generated_bio_data} `));
     console.log(chalk.blueBright(`\n\nLore: ${generated_lore_data} `));
@@ -1252,6 +1312,7 @@ async function get_charcter_file_data(agent_description) {
     console.log(chalk.blueBright(`\n\nAdjectives: ${generated_adjectives} `));
     console.log(chalk.blueBright(`\n\nTopics: ${generated_topics} `));
     console.log(chalk.blueBright(`\n\nStyle: ${generated_style} `));
+    */
     return {
         system: generated_system_data,
         bio: generated_bio_data,
@@ -1266,28 +1327,34 @@ async function get_charcter_file_data(agent_description) {
 
 async function generate_character_file(agent_description, file_path) {
     let { system, bio, lore, messageExamples, postExamples, adjectives, topics, style } = await get_charcter_file_data(agent_description)
-    let included_clients = agentType === 'Create Twitter Agent' ? "Clients.TWITTER" : ""
-    let character_file = `import { Character, ModelProviderName, defaultCharacter, Clients } from "@elizaos/core";
-    export const character: Character = {
-    ...defaultCharacter,
-    modelProvider: ModelProviderName.GAIANET,
-    clients: [${included_clients}],
-    name: "${agentName}",
-    plugins: [],
-    settings: {
-        secrets: {},
-        voice: {
-            model: "en_US-male-medium"
+    let included_clients = agentType === 'Create Twitter Agent' ? `"twitter"` : ""
+    let model_provider = ""
+
+    if (selectedProvider === 'cancel') {
+        model_provider = 'gaianet'
+    } else {
+        model_provider = selectedProvider
+    }
+
+    let character_file = `{
+    "name": "${agentName}",
+    "clients": [${included_clients}],
+    "modelProvider": "${model_provider}",
+    "settings": {
+        "voice": {
+            "model": "en_GB-alan-medium"
         }
     },
-    system: ${system},
-    bio: ${bio},
-    lore: ${lore},
-    messageExamples: ${messageExamples},
-    postExamples: ${postExamples},
-    adjectives: ${adjectives},
-    topics: ${topics},
-    style: ${style}
+    "plugins": [],
+    "system": "${system}",
+    "bio": ${bio},
+    "lore": ${lore},
+    "knowledge": [],
+    "messageExamples": ${messageExamples},
+    "postExamples": ${postExamples},
+    "topics": ${topics},
+    "style": ${style},
+    "adjectives": ${adjectives}
     }`
 
     try {
@@ -1300,10 +1367,31 @@ async function generate_character_file(agent_description, file_path) {
 }
 
 function createTwitterEnvTemplate(username, password, email) {
-    return envTemplate.replace(
+    let result = envTemplate.replace(
         /TWITTER_USERNAME=.*\nTWITTER_PASSWORD=.*\nTWITTER_EMAIL=.*/,
-        `TWITTER_USERNAME=${username}\nTWITTER_PASSWORD=${password}\nTWITTER_EMAIL=${email} `
+        `TWITTER_USERNAME=${username}\nTWITTER_PASSWORD=${password}\nTWITTER_EMAIL=${email}`
     );
+    envTemplate = result
+    return result
+}
+
+function createOpenEnvTemplate(api_key) {
+    if (selectedProvider === 'openai') {
+        return envTemplate.replace(
+            /OPENAI_API_KEY=.*\n/,
+            `OPENAI_API_KEY=${api_key}\n`
+        );
+    } else if (selectedProvider === 'anthropic') {
+        return envTemplate.replace(
+            /ANTHROPIC_API_KEY=.*\n/,
+            `ANTHROPIC_API_KEY=${api_key}\n`
+        );
+    } else if (selectedProvider === 'claude_vertex') {
+        return envTemplate.replace(
+            /CLAUDE_API_KEY=.*\n/,
+            `CLAUDE_API_KEY=${api_key}\n`
+        );
+    }
 }
 
 function writeEnvFile(content, filepath = 'test.env') {
@@ -1314,4 +1402,7 @@ function writeEnvFile(content, filepath = 'test.env') {
     }
 }
 
+
 startApp();
+
+
