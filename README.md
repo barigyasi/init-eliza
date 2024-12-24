@@ -19,7 +19,6 @@
    - 🛠️ **Advanced Customization Options**
 >
  
-
 - 🛠️ **Easy Interface**
   - 🆕 **Create new agents**
   - ▶️ **Start existing agents**
@@ -33,6 +32,10 @@
 - Git
 - Linux/Unix environment (Tested on Ubuntu 22.04)
 
+
+## Gitpod
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/W3bbieLabs/init-eliza)
 ## 🚀 Quick Start via npm
 
 Install via npm:
