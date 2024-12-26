@@ -468,6 +468,7 @@ async function showMainMenu() {
             'Start Agent',
             'Remove Agent',
             'List Agents',
+            'Chat with Agent',
             'Reinstall SQLite',
             'Exit'
         ]
@@ -494,6 +495,9 @@ async function showMainMenu() {
             break;
         case 'List Agents':
             await listAgents();
+            break;
+        case 'Chat with Agent':
+            await sendMessageToAgentMenu();
             break;
         case 'Reinstall SQLite':
             await fixStupidSQLiteIssue();
@@ -1402,6 +1406,119 @@ function writeEnvFile(content, filepath = 'test.env') {
     }
 }
 
+async function sendMessageToAgent(agentName, message = "Hello, how are you today?") {
+    try {
+        const response = await fetch(`http://localhost:3000/${agentName}/message`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ text: message })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log("Agent: " + chalk.green(`${data[0].text}`));
+        //console.log(data);
+        return data.text;
+    } catch (error) {
+        console.error(chalk.red('Error sending message:', error.message));
+        throw error;
+    }
+}
+
+async function handleMessage(selectedAgent) {
+    // Get the message from the user
+    const messageAnswer = await inquirer.prompt({
+        name: 'message',
+        type: 'input',
+        message: 'Enter your message:',
+        /*
+        validate(input) {
+            return input.length > 0 ? true : 'Message cannot be empty';
+        }*/
+    });
+
+    // Send the message
+    if (messageAnswer.message.length > 0) {
+        //let spinner = createSpinner('Agent is typing...').start();
+        await sendMessageToAgent(selectedAgent, messageAnswer.message);
+        //spinner.success({ text: 'Message received.' });
+        handleMessage(selectedAgent);
+    } else {
+        //console.log(chalk.red('Message cannot be empty'));
+        await showMainMenu();
+    }
+}
+async function sendMessageToAgentMenu() {
+    const agentsDir = 'agents';
+
+    // Check if agents directory exists
+    if (!existsSync(agentsDir)) {
+        console.log(chalk.red('\nNo agents directory found.'));
+        await showMainMenu();
+        return;
+    }
+
+    try {
+        // Get list of agent folders
+        let agents = readdirSync(path.join(agentsDir, 'characters'), { withFileTypes: true })
+            .filter(dirent => dirent.isFile())
+            .map(dirent => dirent.name)
+            .filter(name => name.endsWith('.character.json'))
+            .map(name => name.split('.')[0]);
+
+        if (agents.length === 0) {
+            console.log(chalk.yellow('\nNo agents found. Create an agent first.'));
+            await showMainMenu();
+            return;
+        }
+
+        agents.push("Back to Main Menu");
+
+        // Let user select an agent
+        const agentAnswer = await inquirer.prompt({
+            name: 'selectedAgent',
+            type: 'list',
+            message: 'Select an agent to message:',
+            choices: agents
+        });
+
+        if (agentAnswer.selectedAgent === "Back to Main Menu") {
+            await showMainMenu();
+            return;
+        }
+
+        handleMessage(agentAnswer.selectedAgent);
+
+        /*
+        // Ask if they want to send another message or return to main menu
+        const continueAnswer = await inquirer.prompt({
+            name: 'action',
+            type: 'list',
+            message: 'What would you like to do next?',
+            choices: [
+                'Send Another Message',
+                'Return to Main Menu'
+            ]
+        });
+        */
+
+        /*
+        if (continueAnswer.action === 'Send Another Message') {
+            await sendMessageToAgentMenu();
+        } else {
+            await showMainMenu();
+        }*/
+
+    } catch (error) {
+        console.error(chalk.red('Error:', error.message));
+        await showMainMenu();
+    }
+}
 
 startApp();
 
