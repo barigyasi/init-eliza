@@ -1,0 +1,3 @@
+tasks:
+  - init: pnpm install
+    command: nvm use 23.3.0 && pnpm run start
