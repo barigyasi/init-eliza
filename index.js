@@ -3,7 +3,6 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import gradient from 'gradient-string';
-import chalkAnimation from 'chalk-animation';
 import figlet from 'figlet';
 import { createSpinner } from 'nanospinner';
 import { exec, spawn } from 'child_process';
@@ -19,6 +18,7 @@ let anthropicClient = null
 let platform = process.platform;
 let folderName;
 let agentName;
+let elizaVersion;
 let selectedProvider;
 let apiKey = "";
 let agentType;
@@ -368,9 +368,18 @@ function getOperatingSystem() {
 
 const execAsync = promisify(exec);
 
+async function getTagList(){
+    const url = 'https://api.github.com/repos/elizaOS/eliza/releases';
+    const response = await fetch(url);
+    const data = await response.json();
+    return data.map(release => release.tag_name);
+}
+
+
 async function retryWithNewName() {
     console.log(chalk.yellow('\nLet\'s try with a different agent name.'));
     await askName(); // This will get a new name from the user
+    await askVersion();
     await cloneElizaRepo(); // Try cloning again with the new name
 }
 
@@ -395,7 +404,7 @@ async function cloneElizaRepo() {
             env_string = createOpenEnvTemplate(apiKey)
         }
 
-        await writeEnvFile(env_string, `${folderName}/agent/.env`)
+        writeEnvFile(env_string, `${folderName}/agent/.env`)
 
         await startAgent(agentName);
 
@@ -411,9 +420,11 @@ async function cloneElizaRepo() {
             await execAsync('. ~/.nvm/nvm.sh && nvm install 23.3.0');
         }
 
+        console.log(chalk.green(`Cloning Eliza version ${elizaVersion}...`));
+
         // Use the correct version
         await execAsync('. ~/.nvm/nvm.sh && nvm use 23.3.0');
-        await execAsync(`git clone -b v0.1.7-alpha.1 https://github.com/ai16z/eliza.git ${folderName}`);
+        await execAsync(`git clone -b ${elizaVersion} https://github.com/ai16z/eliza.git ${folderName}`);
         //await execAsync(`cd ${folderName} && git checkout develop`);
         //await execAsync(`curl -o ${folderName}/packages/client-twitter/src/post.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/post.ts`);
 
@@ -424,7 +435,7 @@ async function cloneElizaRepo() {
             env_string = createOpenEnvTemplate(apiKey)
         }
 
-        await writeEnvFile(env_string, `${folderName}/agent/.env`)
+        writeEnvFile(env_string, `${folderName}/agent/.env`)
 
         // Check and install pnpm if needed
         await installPnpm();
@@ -477,7 +488,7 @@ async function showMainMenu() {
     switch (answers.action) {
         case 'Create Agent':
             await askName();
-
+            await askVersion();
             await selectProvider();
             if (selectedProvider !== 'cancel') {
                 await configureAPI();
@@ -642,6 +653,21 @@ async function askName() {
 
     agentName = answers.player_name;
 }
+
+async function askVersion(){
+    const url = 'https://api.github.com/repos/elizaOS/eliza/releases';
+    const response = await fetch(url);
+    const data = await response.json();
+    const versions = data.map(release => release.tag_name);
+    const answers = await inquirer.prompt({
+        name: 'version',
+        type: 'list',
+        message: 'Select a version:',
+        choices: versions
+    });
+    elizaVersion = answers.version;
+}
+
 
 async function isOllamaInstalled() {
     try {
