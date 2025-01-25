@@ -14,6 +14,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 let openai = null
 let anthropicClient = null
+let deepseekClient = null
 
 let platform = process.platform;
 let folderName;
@@ -35,6 +36,7 @@ DISCORD_VOICE_CHANNEL_ID=       # The ID of the voice channel the bot should joi
 
 # AI Model API Keys
 OPENAI_API_KEY=                 # OpenAI API key, starting with sk-
+OPENAI_API_URL=                 # OpenAI API Endpoint (optional), Default: https://api.openai.com/v1
 SMALL_OPENAI_MODEL=             # Default: gpt-4o-mini
 MEDIUM_OPENAI_MODEL=            # Default: gpt-4o
 LARGE_OPENAI_MODEL=             # Default: gpt-4o
@@ -407,7 +409,7 @@ async function cloneElizaRepo() {
         writeEnvFile(env_string, `${folderName}/agent/.env`)
 
         await startAgent(agentName);
-
+        
         return
     }
 
@@ -712,7 +714,8 @@ async function selectProvider() {
             'openai',
             'anthropic',
             'claude_vertex',
-            'cancel'
+            'cancel',
+            'deepseek'
         ]
     });
 
@@ -740,6 +743,8 @@ async function configureAPI() {
             openai = new OpenAI({ apiKey });
         } else if (selectedProvider === 'anthropic') {
             anthropicClient = new Anthropic({ apiKey });
+        } else if (selectedProvider === 'deepseek') {
+            deepseekClient = new OpenAI({ apiKey ,baseURL: "https://api.deepseek.com"});
         }
 
     } else {
@@ -1120,6 +1125,13 @@ async function makeClaudeRequest(system, messages, model = "claude-3-5-sonnet-la
     return output
 }
 
+async function makeDeepSeekRequest(messages, model = "deepseek-chat") {
+    const completion = await deepseekClient.chat.completions.create({ model, messages });
+    let output = completion.choices[0].message.content
+    console.log(chalk.blueBright(`\n${output}`));
+    return output
+}
+
 
 // Change to support other models
 async function generatePrompt(instructions, description, system_prompt) {
@@ -1131,6 +1143,9 @@ async function generatePrompt(instructions, description, system_prompt) {
             return resp
         } else if (selectedProvider === 'anthropic') {
             let resp = await makeClaudeRequest(system_prompt, [{ role: "user", content }])
+            return resp
+        } else if (selectedProvider === 'deepseek') {
+            let resp = await makeDeepSeekRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
             return resp
         } else {
             let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
@@ -1154,6 +1169,11 @@ async function generate_with_format_example(instructions, description, system_pr
         return resp
     } else if (selectedProvider === 'anthropic') {
         let resp = await makeClaudeRequest(system_prompt, [{ role: "user", content }])
+        return resp
+    } else if (selectedProvider === 'deepseek') {
+        let resp = await makeDeepSeekRequest([{ role: "system", content: system_prompt }, {
+            role: "user", content
+        }])
         return resp
     } else {
         let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
@@ -1421,6 +1441,33 @@ function createOpenEnvTemplate(api_key) {
             /CLAUDE_API_KEY=.*\n/,
             `CLAUDE_API_KEY=${api_key}\n`
         );
+    } else if (selectedProvider === 'deepseek') {
+        let result = envTemplate.replace(
+            /OPENAI_API_KEY=.*\n/,
+            `OPENAI_API_KEY=${api_key}\n`
+        );
+
+        result = result.replace(
+            /OPENAI_API_URL=.*\n/,
+            `OPENAI_API_URL=https://api.deepseek.com\n`
+        );
+
+        result = result.replace(
+            /SMALL_OPENAI_MODEL=.*\n/,
+            `SMALL_OPENAI_MODEL=deepseek-chat\n`
+        );
+
+        result = result.replace(
+            /LARGE_OPENAI_MODEL=.*\n/,
+            `LARGE_OPENAI_MODEL=deepseek-chat\n`
+        );
+
+        result = result.replace(
+            /MEDIUM_OPENAI_MODEL=.*\n/,
+            `MEDIUM_OPENAI_MODEL=deepseek-chat\n`
+        );
+
+        return result
     }
 }
 
