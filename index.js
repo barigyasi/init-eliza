@@ -1382,6 +1382,8 @@ async function generate_character_file(agent_description, file_path) {
 
     if (selectedProvider === 'cancel') {
         model_provider = 'gaianet'
+    } else if (selectedProvider === 'deepseek') {
+        model_provider = 'openai'
     } else {
         model_provider = selectedProvider
     }
