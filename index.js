@@ -3,7 +3,6 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import gradient from 'gradient-string';
-import chalkAnimation from 'chalk-animation';
 import figlet from 'figlet';
 import { createSpinner } from 'nanospinner';
 import { exec, spawn } from 'child_process';
@@ -15,10 +14,12 @@ import Anthropic from '@anthropic-ai/sdk';
 
 let openai = null
 let anthropicClient = null
+let deepseekClient = null
 
 let platform = process.platform;
 let folderName;
 let agentName;
+let elizaVersion;
 let selectedProvider;
 let apiKey = "";
 let agentType;
@@ -35,6 +36,7 @@ DISCORD_VOICE_CHANNEL_ID=       # The ID of the voice channel the bot should joi
 
 # AI Model API Keys
 OPENAI_API_KEY=                 # OpenAI API key, starting with sk-
+OPENAI_API_URL=                 # OpenAI API Endpoint (optional), Default: https://api.openai.com/v1
 SMALL_OPENAI_MODEL=             # Default: gpt-4o-mini
 MEDIUM_OPENAI_MODEL=            # Default: gpt-4o
 LARGE_OPENAI_MODEL=             # Default: gpt-4o
@@ -368,9 +370,18 @@ function getOperatingSystem() {
 
 const execAsync = promisify(exec);
 
+async function getTagList(){
+    const url = 'https://api.github.com/repos/elizaOS/eliza/releases';
+    const response = await fetch(url);
+    const data = await response.json();
+    return data.map(release => release.tag_name);
+}
+
+
 async function retryWithNewName() {
     console.log(chalk.yellow('\nLet\'s try with a different agent name.'));
     await askName(); // This will get a new name from the user
+    await askVersion();
     await cloneElizaRepo(); // Try cloning again with the new name
 }
 
@@ -395,10 +406,10 @@ async function cloneElizaRepo() {
             env_string = createOpenEnvTemplate(apiKey)
         }
 
-        await writeEnvFile(env_string, `${folderName}/agent/.env`)
+        writeEnvFile(env_string, `${folderName}/agent/.env`)
 
         await startAgent(agentName);
-
+        
         return
     }
 
@@ -411,9 +422,11 @@ async function cloneElizaRepo() {
             await execAsync('. ~/.nvm/nvm.sh && nvm install 23.3.0');
         }
 
+        console.log(chalk.green(`Cloning Eliza version ${elizaVersion}...`));
+
         // Use the correct version
         await execAsync('. ~/.nvm/nvm.sh && nvm use 23.3.0');
-        await execAsync(`git clone -b v0.1.7-alpha.1 https://github.com/ai16z/eliza.git ${folderName}`);
+        await execAsync(`git clone -b ${elizaVersion} https://github.com/ai16z/eliza.git ${folderName}`);
         //await execAsync(`cd ${folderName} && git checkout develop`);
         //await execAsync(`curl -o ${folderName}/packages/client-twitter/src/post.ts https://raw.githubusercontent.com/W3bbieLabs/init-eliza/refs/heads/main/src/post.ts`);
 
@@ -424,7 +437,7 @@ async function cloneElizaRepo() {
             env_string = createOpenEnvTemplate(apiKey)
         }
 
-        await writeEnvFile(env_string, `${folderName}/agent/.env`)
+        writeEnvFile(env_string, `${folderName}/agent/.env`)
 
         // Check and install pnpm if needed
         await installPnpm();
@@ -477,7 +490,7 @@ async function showMainMenu() {
     switch (answers.action) {
         case 'Create Agent':
             await askName();
-
+            await askVersion();
             await selectProvider();
             if (selectedProvider !== 'cancel') {
                 await configureAPI();
@@ -643,6 +656,21 @@ async function askName() {
     agentName = answers.player_name;
 }
 
+async function askVersion(){
+    const url = 'https://api.github.com/repos/elizaOS/eliza/releases';
+    const response = await fetch(url);
+    const data = await response.json();
+    const versions = data.map(release => release.tag_name);
+    const answers = await inquirer.prompt({
+        name: 'version',
+        type: 'list',
+        message: 'Select a version:',
+        choices: versions
+    });
+    elizaVersion = answers.version;
+}
+
+
 async function isOllamaInstalled() {
     try {
         await execAsync('which ollama');
@@ -686,7 +714,8 @@ async function selectProvider() {
             'openai',
             'anthropic',
             'claude_vertex',
-            'cancel'
+            'cancel',
+            'deepseek'
         ]
     });
 
@@ -714,6 +743,8 @@ async function configureAPI() {
             openai = new OpenAI({ apiKey });
         } else if (selectedProvider === 'anthropic') {
             anthropicClient = new Anthropic({ apiKey });
+        } else if (selectedProvider === 'deepseek') {
+            deepseekClient = new OpenAI({ apiKey ,baseURL: "https://api.deepseek.com"});
         }
 
     } else {
@@ -1094,6 +1125,13 @@ async function makeClaudeRequest(system, messages, model = "claude-3-5-sonnet-la
     return output
 }
 
+async function makeDeepSeekRequest(messages, model = "deepseek-chat") {
+    const completion = await deepseekClient.chat.completions.create({ model, messages });
+    let output = completion.choices[0].message.content
+    console.log(chalk.blueBright(`\n${output}`));
+    return output
+}
+
 
 // Change to support other models
 async function generatePrompt(instructions, description, system_prompt) {
@@ -1105,6 +1143,9 @@ async function generatePrompt(instructions, description, system_prompt) {
             return resp
         } else if (selectedProvider === 'anthropic') {
             let resp = await makeClaudeRequest(system_prompt, [{ role: "user", content }])
+            return resp
+        } else if (selectedProvider === 'deepseek') {
+            let resp = await makeDeepSeekRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
             return resp
         } else {
             let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, { role: "user", content }])
@@ -1128,6 +1169,11 @@ async function generate_with_format_example(instructions, description, system_pr
         return resp
     } else if (selectedProvider === 'anthropic') {
         let resp = await makeClaudeRequest(system_prompt, [{ role: "user", content }])
+        return resp
+    } else if (selectedProvider === 'deepseek') {
+        let resp = await makeDeepSeekRequest([{ role: "system", content: system_prompt }, {
+            role: "user", content
+        }])
         return resp
     } else {
         let resp = await makeGaiaNetRequest([{ role: "system", content: system_prompt }, {
@@ -1336,6 +1382,8 @@ async function generate_character_file(agent_description, file_path) {
 
     if (selectedProvider === 'cancel') {
         model_provider = 'gaianet'
+    } else if (selectedProvider === 'deepseek') {
+        model_provider = 'openai'
     } else {
         model_provider = selectedProvider
     }
@@ -1395,6 +1443,33 @@ function createOpenEnvTemplate(api_key) {
             /CLAUDE_API_KEY=.*\n/,
             `CLAUDE_API_KEY=${api_key}\n`
         );
+    } else if (selectedProvider === 'deepseek') {
+        let result = envTemplate.replace(
+            /OPENAI_API_KEY=.*\n/,
+            `OPENAI_API_KEY=${api_key}\n`
+        );
+
+        result = result.replace(
+            /OPENAI_API_URL=.*\n/,
+            `OPENAI_API_URL=https://api.deepseek.com\n`
+        );
+
+        result = result.replace(
+            /SMALL_OPENAI_MODEL=.*\n/,
+            `SMALL_OPENAI_MODEL=deepseek-chat\n`
+        );
+
+        result = result.replace(
+            /LARGE_OPENAI_MODEL=.*\n/,
+            `LARGE_OPENAI_MODEL=deepseek-chat\n`
+        );
+
+        result = result.replace(
+            /MEDIUM_OPENAI_MODEL=.*\n/,
+            `MEDIUM_OPENAI_MODEL=deepseek-chat\n`
+        );
+
+        return result
     }
 }
 
